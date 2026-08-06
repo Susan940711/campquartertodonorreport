@@ -80,11 +80,15 @@ def get_column_map(columns: List[str]) -> Dict[str, str]:
     for normalized, original in normalized_map.items():
         if normalized == "period" and "Period" not in mapping:
             mapping["Period"] = original
-        if "organization" in normalized and "Organization" not in mapping:
+        if (
+            "organization" in normalized or normalized.startswith("organiz")
+        ) and "Organization" not in mapping:
             mapping["Organization"] = original
-        if "project name" in normalized and "Project Name" not in mapping:
-            mapping["Project Name"] = original
-        if normalized == "project" and "Project Name" not in mapping:
+        if (
+            "project name" in normalized
+            or normalized.startswith("project na")
+            or normalized == "project"
+        ) and "Project Name" not in mapping:
             mapping["Project Name"] = original
         if "indicator" in normalized and "indicator" not in mapping:
             mapping["indicator"] = original
@@ -118,6 +122,20 @@ def standardize_base_columns(df: pd.DataFrame) -> pd.DataFrame:
     return standardized
 
 
+def detect_gender_tokenized(normalized_col_name: str) -> Optional[str]:
+    tokens = normalized_col_name.split(" ")
+
+    female_tokens = {"female", "fem", "fema", "fen", "fer", "fe"}
+    male_tokens = {"male", "mal", "ma"}
+
+    if any(token.startswith("fem") or token in female_tokens for token in tokens):
+        return "female"
+    if any(token in male_tokens for token in tokens):
+        return "male"
+
+    return None
+
+
 def find_quarter_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
     quarter_map: Dict[str, Dict[str, List[str]]] = {
         "q1": {"male": [], "female": [], "target": []},
@@ -129,23 +147,30 @@ def find_quarter_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
     for col in df.columns:
         n = normalize_text(col)
         q = None
-        for quarter in ["q1", "q2", "q3", "q4"]:
-            if quarter in n:
+        quarter_patterns = {
+            "q1": r"\bq\s*1\b",
+            "q2": r"\bq\s*2\b",
+            "q3": r"\bq\s*3\b",
+            "q4": r"\bq\s*4\b",
+        }
+        for quarter, pattern in quarter_patterns.items():
+            if re.search(pattern, n):
                 q = quarter
                 break
 
         if not q:
             continue
 
-        has_u1 = bool(re.search(r"\bu ?1\b|\bunder ?1\b", n))
-        has_15 = bool(re.search(r"\b1 ?5\b|\b1 to 5\b", n))
+        has_u1 = bool(re.search(r"\bu\s*1\b|\bunder\s*1\b|\b<\s*1\b", n))
+        has_15 = bool(re.search(r"\b1\s*(?:to\s*)?5\b", n))
         has_age_band = has_u1 or has_15
+        gender = detect_gender_tokenized(n)
 
-        if "male" in n and has_age_band:
+        if gender == "male" and has_age_band:
             quarter_map[q]["male"].append(col)
-        elif "female" in n and has_age_band:
+        elif gender == "female" and has_age_band:
             quarter_map[q]["female"].append(col)
-        elif "target" in n:
+        elif re.search(r"\btarg\w*\b", n):
             quarter_map[q]["target"].append(col)
 
     return quarter_map
