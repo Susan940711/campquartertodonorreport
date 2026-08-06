@@ -28,6 +28,28 @@ ESSENTIAL_OUTPUT_COLUMNS = [
     "Annual Total",
 ]
 
+AGE_SEMESTER_OUTPUT_COLUMNS = [
+    "Period",
+    "Organization",
+    "Project Name",
+    "indicator",
+    "S1 U1 Male",
+    "S1 U1 Female",
+    "S1 1-5 Male",
+    "S1 1-5 Female",
+    "S1 Total",
+    "S2 U1 Male",
+    "S2 U1 Female",
+    "S2 1-5 Male",
+    "S2 1-5 Female",
+    "S2 Total",
+    "Annual U1 Male",
+    "Annual U1 Female",
+    "Annual 1-5 Male",
+    "Annual 1-5 Female",
+    "Annual Total",
+]
+
 
 GROUPING_KEYS = ["Period", "Organization", "Project Name", "indicator"]
 
@@ -170,6 +192,22 @@ def detect_gender_tokenized(normalized_col_name: str) -> Optional[str]:
     return None
 
 
+def detect_age_band(normalized_col_name: str) -> Optional[str]:
+    n = normalize_text(normalized_col_name)
+    c = compact_text(normalized_col_name)
+
+    has_u1 = bool(re.search(r"\bu\s*1\b|\bunder\s*1\b|\b<\s*1\b", n)) or (
+        "u1" in c or "under1" in c
+    )
+    has_15 = bool(re.search(r"\b1\s*(?:to\s*)?5\b", n)) or ("15" in c)
+
+    if has_u1:
+        return "u1"
+    if has_15:
+        return "1-5"
+    return None
+
+
 def find_quarter_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
     quarter_map: Dict[str, Dict[str, List[str]]] = {
         "q1": {"male": [], "female": [], "target": []},
@@ -203,6 +241,43 @@ def find_quarter_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
             quarter_map[q]["female"].append(col)
         elif re.search(r"\btarg\w*\b", n) or ("targ" in c):
             quarter_map[q]["target"].append(col)
+
+    return quarter_map
+
+
+def find_quarter_age_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
+    quarter_map: Dict[str, Dict[str, List[str]]] = {
+        "q1": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+        "q2": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+        "q3": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+        "q4": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+    }
+
+    for col in df.columns:
+        n = normalize_text(col)
+        c = compact_text(col)
+        q = None
+        for quarter in ["q1", "q2", "q3", "q4"]:
+            if quarter in c:
+                q = quarter
+                break
+
+        if not q:
+            continue
+
+        gender = detect_gender_tokenized(n)
+        age_band = detect_age_band(n)
+        if not gender or not age_band:
+            continue
+
+        if age_band == "u1" and gender == "male":
+            quarter_map[q]["u1_male"].append(col)
+        elif age_band == "u1" and gender == "female":
+            quarter_map[q]["u1_female"].append(col)
+        elif age_band == "1-5" and gender == "male":
+            quarter_map[q]["15_male"].append(col)
+        elif age_band == "1-5" and gender == "female":
+            quarter_map[q]["15_female"].append(col)
 
     return quarter_map
 
@@ -252,6 +327,45 @@ def find_semester_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
             semester_map[sem]["female"].append(col)
         elif "target" in n or "targ" in c:
             semester_map[sem]["target"].append(col)
+
+    return semester_map
+
+
+def find_semester_age_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
+    semester_map: Dict[str, Dict[str, List[str]]] = {
+        "s1": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+        "s2": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+        "annual": {"u1_male": [], "u1_female": [], "15_male": [], "15_female": []},
+    }
+
+    for col in df.columns:
+        n = normalize_text(col)
+        c = compact_text(col)
+
+        sem = None
+        if c.startswith("s1"):
+            sem = "s1"
+        elif c.startswith("s2"):
+            sem = "s2"
+        elif c.startswith("annual"):
+            sem = "annual"
+
+        if not sem:
+            continue
+
+        gender = detect_gender_tokenized(n)
+        age_band = detect_age_band(n)
+        if not gender or not age_band:
+            continue
+
+        if age_band == "u1" and gender == "male":
+            semester_map[sem]["u1_male"].append(col)
+        elif age_band == "u1" and gender == "female":
+            semester_map[sem]["u1_female"].append(col)
+        elif age_band == "1-5" and gender == "male":
+            semester_map[sem]["15_male"].append(col)
+        elif age_band == "1-5" and gender == "female":
+            semester_map[sem]["15_female"].append(col)
 
     return semester_map
 
@@ -328,6 +442,100 @@ def compute_semester_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def compute_age_semester_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    quarter_age_cols = find_quarter_age_columns(df)
+    semester_age_cols = find_semester_age_columns(df)
+
+    result = pd.DataFrame(index=df.index)
+
+    q_s1_detected = any(
+        len(quarter_age_cols[q][bucket]) > 0
+        for q in ["q1", "q2"]
+        for bucket in ["u1_male", "u1_female", "15_male", "15_female"]
+    )
+    q_s2_detected = any(
+        len(quarter_age_cols[q][bucket]) > 0
+        for q in ["q3", "q4"]
+        for bucket in ["u1_male", "u1_female", "15_male", "15_female"]
+    )
+
+    if q_s1_detected:
+        result["S1 U1 Male"] = sum_columns(df, quarter_age_cols["q1"]["u1_male"]) + sum_columns(
+            df, quarter_age_cols["q2"]["u1_male"]
+        )
+        result["S1 U1 Female"] = sum_columns(df, quarter_age_cols["q1"]["u1_female"]) + sum_columns(
+            df, quarter_age_cols["q2"]["u1_female"]
+        )
+        result["S1 1-5 Male"] = sum_columns(df, quarter_age_cols["q1"]["15_male"]) + sum_columns(
+            df, quarter_age_cols["q2"]["15_male"]
+        )
+        result["S1 1-5 Female"] = sum_columns(
+            df, quarter_age_cols["q1"]["15_female"]
+        ) + sum_columns(df, quarter_age_cols["q2"]["15_female"])
+    else:
+        result["S1 U1 Male"] = sum_columns(df, semester_age_cols["s1"]["u1_male"])
+        result["S1 U1 Female"] = sum_columns(df, semester_age_cols["s1"]["u1_female"])
+        result["S1 1-5 Male"] = sum_columns(df, semester_age_cols["s1"]["15_male"])
+        result["S1 1-5 Female"] = sum_columns(df, semester_age_cols["s1"]["15_female"])
+
+    result["S1 Total"] = (
+        result["S1 U1 Male"]
+        + result["S1 U1 Female"]
+        + result["S1 1-5 Male"]
+        + result["S1 1-5 Female"]
+    )
+
+    if q_s2_detected:
+        result["S2 U1 Male"] = sum_columns(df, quarter_age_cols["q3"]["u1_male"]) + sum_columns(
+            df, quarter_age_cols["q4"]["u1_male"]
+        )
+        result["S2 U1 Female"] = sum_columns(df, quarter_age_cols["q3"]["u1_female"]) + sum_columns(
+            df, quarter_age_cols["q4"]["u1_female"]
+        )
+        result["S2 1-5 Male"] = sum_columns(df, quarter_age_cols["q3"]["15_male"]) + sum_columns(
+            df, quarter_age_cols["q4"]["15_male"]
+        )
+        result["S2 1-5 Female"] = sum_columns(
+            df, quarter_age_cols["q3"]["15_female"]
+        ) + sum_columns(df, quarter_age_cols["q4"]["15_female"])
+    else:
+        result["S2 U1 Male"] = sum_columns(df, semester_age_cols["s2"]["u1_male"])
+        result["S2 U1 Female"] = sum_columns(df, semester_age_cols["s2"]["u1_female"])
+        result["S2 1-5 Male"] = sum_columns(df, semester_age_cols["s2"]["15_male"])
+        result["S2 1-5 Female"] = sum_columns(df, semester_age_cols["s2"]["15_female"])
+
+    result["S2 Total"] = (
+        result["S2 U1 Male"]
+        + result["S2 U1 Female"]
+        + result["S2 1-5 Male"]
+        + result["S2 1-5 Female"]
+    )
+
+    result["Annual U1 Male"] = result["S1 U1 Male"] + result["S2 U1 Male"]
+    result["Annual U1 Female"] = result["S1 U1 Female"] + result["S2 U1 Female"]
+    result["Annual 1-5 Male"] = result["S1 1-5 Male"] + result["S2 1-5 Male"]
+    result["Annual 1-5 Female"] = result["S1 1-5 Female"] + result["S2 1-5 Female"]
+
+    if any(len(semester_age_cols["annual"][k]) > 0 for k in ["u1_male", "u1_female", "15_male", "15_female"]):
+        if len(semester_age_cols["annual"]["u1_male"]) > 0:
+            result["Annual U1 Male"] = sum_columns(df, semester_age_cols["annual"]["u1_male"])
+        if len(semester_age_cols["annual"]["u1_female"]) > 0:
+            result["Annual U1 Female"] = sum_columns(df, semester_age_cols["annual"]["u1_female"])
+        if len(semester_age_cols["annual"]["15_male"]) > 0:
+            result["Annual 1-5 Male"] = sum_columns(df, semester_age_cols["annual"]["15_male"])
+        if len(semester_age_cols["annual"]["15_female"]) > 0:
+            result["Annual 1-5 Female"] = sum_columns(df, semester_age_cols["annual"]["15_female"])
+
+    result["Annual Total"] = (
+        result["Annual U1 Male"]
+        + result["Annual U1 Female"]
+        + result["Annual 1-5 Male"]
+        + result["Annual 1-5 Female"]
+    )
+
+    return result
+
+
 def prepare_indicator_dataframe(uploaded_file) -> pd.DataFrame:
     data = uploaded_file.read()
     file_io = io.BytesIO(data)
@@ -395,10 +603,75 @@ def build_combined_semester_report(file1, file2) -> pd.DataFrame:
     return final_df
 
 
-def dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
+def prepare_age_semester_dataframe(uploaded_file) -> pd.DataFrame:
+    data = uploaded_file.read()
+    file_io = io.BytesIO(data)
+
+    sheet_name = detect_indicator_sheet(file_io)
+    file_io.seek(0)
+    raw = pd.read_excel(file_io, sheet_name=sheet_name)
+
+    standardized = standardize_base_columns(raw)
+
+    output = standardized[["Period", "indicator"]].copy()
+    metrics = compute_age_semester_metrics(raw)
+    for col in metrics.columns:
+        output[col] = metrics[col]
+
+    output["Organization"] = "PRF"
+    output["Project Name"] = "Camp Immunization"
+
+    output["Period"] = output["Period"].map(normalize_group_key)
+    output["indicator"] = output["indicator"].map(normalize_group_key)
+    output = output[(output["Period"] != "") & (output["indicator"] != "")]
+
+    numeric_cols = [c for c in output.columns if c not in GROUPING_KEYS]
+    for c in numeric_cols:
+        output[c] = to_numeric_series(output[c])
+
+    grouped = (
+        output.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    return grouped
+
+
+def build_combined_age_semester_report(file1, file2) -> pd.DataFrame:
+    df1 = prepare_age_semester_dataframe(file1)
+    df2 = prepare_age_semester_dataframe(file2)
+
+    combined = pd.concat([df1, df2], ignore_index=True)
+    combined["Period"] = combined["Period"].map(normalize_group_key)
+    combined["indicator"] = combined["indicator"].map(normalize_group_key)
+    combined = combined[(combined["Period"] != "") & (combined["indicator"] != "")]
+
+    numeric_cols = [c for c in combined.columns if c not in GROUPING_KEYS]
+    final_df = (
+        combined.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    for col in AGE_SEMESTER_OUTPUT_COLUMNS:
+        if col not in final_df.columns:
+            final_df[col] = 0
+
+    final_df = final_df[AGE_SEMESTER_OUTPUT_COLUMNS]
+
+    for col in AGE_SEMESTER_OUTPUT_COLUMNS:
+        if col not in ["Period", "Organization", "Project Name", "indicator"]:
+            final_df[col] = to_numeric_series(final_df[col]).round(0).astype(int)
+
+    return final_df
+
+
+def dataframe_to_excel_bytes(indicator_df: pd.DataFrame, age_df: pd.DataFrame) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
+        indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
+        age_df.to_excel(writer, sheet_name="Age_semester", index=False)
     output.seek(0)
     return output.read()
 
@@ -424,11 +697,19 @@ def main() -> None:
     if file1 and file2:
         if st.button("Generate Semester Report", type="primary"):
             try:
+                file1.seek(0)
+                file2.seek(0)
                 final_report = build_combined_semester_report(file1, file2)
+                file1.seek(0)
+                file2.seek(0)
+                age_semester_report = build_combined_age_semester_report(file1, file2)
                 st.success("Semester report generated successfully.")
+                st.subheader("Indicator Semester Achievement")
                 st.dataframe(final_report, use_container_width=True)
+                st.subheader("Age_semester")
+                st.dataframe(age_semester_report, use_container_width=True)
 
-                excel_data = dataframe_to_excel_bytes(final_report)
+                excel_data = dataframe_to_excel_bytes(final_report, age_semester_report)
                 st.download_button(
                     "Download Semester Report Excel",
                     data=excel_data,
