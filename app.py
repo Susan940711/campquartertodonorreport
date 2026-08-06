@@ -65,16 +65,31 @@ def detect_indicator_sheet(file_obj: io.BytesIO) -> str:
             continue
 
         normalized = [normalize_text(c) for c in sample.columns]
+        compact_cols = [compact_text(c) for c in sample.columns]
+        sheet_name = normalize_text(sheet)
         score = 0
 
         if any("indicator" in c for c in normalized):
             score += 2
+        if sheet_name == "indicator":
+            score += 6
+        elif "indicator" in sheet_name:
+            score += 3
         if any("period" in c for c in normalized):
             score += 1
         if any("project" in c for c in normalized):
             score += 1
-        if any("q1" in c or "q2" in c or "q3" in c or "q4" in c for c in normalized):
-            score += 1
+        quarter_hits = sum(
+            1 for c in compact_cols if any(q in c for q in ["q1", "q2", "q3", "q4"])
+        )
+        if quarter_hits > 0:
+            score += 8
+        if any("uptoq3" in c for c in compact_cols):
+            score -= 3
+        if any(c.startswith("s1") or c.startswith("s2") for c in compact_cols):
+            score -= 1
+        if any(c.startswith("annual") for c in compact_cols):
+            score -= 1
 
         if score > 0:
             candidates.append((sheet, score))
@@ -202,36 +217,112 @@ def sum_columns(df: pd.DataFrame, columns: List[str]) -> pd.Series:
     return total
 
 
+def find_semester_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
+    semester_map: Dict[str, Dict[str, List[str]]] = {
+        "s1": {"male": [], "female": [], "target": []},
+        "s2": {"male": [], "female": [], "target": []},
+        "annual": {"male": [], "female": [], "target": []},
+    }
+
+    for col in df.columns:
+        n = normalize_text(col)
+        c = compact_text(col)
+
+        sem = None
+        if c.startswith("s1"):
+            sem = "s1"
+        elif c.startswith("s2"):
+            sem = "s2"
+        elif c.startswith("annual"):
+            sem = "annual"
+
+        if not sem:
+            continue
+
+        has_u1 = bool(re.search(r"\bu\s*1\b|\bunder\s*1\b|\b<\s*1\b", n)) or (
+            "u1" in c or "under1" in c
+        )
+        has_15 = bool(re.search(r"\b1\s*(?:to\s*)?5\b", n)) or ("15" in c)
+        has_age_band = has_u1 or has_15
+        gender = detect_gender_tokenized(n)
+
+        if gender == "male" and has_age_band:
+            semester_map[sem]["male"].append(col)
+        elif gender == "female" and has_age_band:
+            semester_map[sem]["female"].append(col)
+        elif "target" in n or "targ" in c:
+            semester_map[sem]["target"].append(col)
+
+    return semester_map
+
+
 def compute_semester_metrics(df: pd.DataFrame) -> pd.DataFrame:
     quarter_cols = find_quarter_columns(df)
+    semester_cols = find_semester_columns(df)
 
     result = pd.DataFrame(index=df.index)
 
-    result["S1 Male"] = sum_columns(df, quarter_cols["q1"]["male"]) + sum_columns(
+    s1_male_quarter = sum_columns(df, quarter_cols["q1"]["male"]) + sum_columns(
         df, quarter_cols["q2"]["male"]
     )
-    result["S1 Female"] = sum_columns(df, quarter_cols["q1"]["female"]) + sum_columns(
+    s1_female_quarter = sum_columns(df, quarter_cols["q1"]["female"]) + sum_columns(
         df, quarter_cols["q2"]["female"]
     )
-    result["S1 Target"] = sum_columns(df, quarter_cols["q1"]["target"]) + sum_columns(
+    s1_target_quarter = sum_columns(df, quarter_cols["q1"]["target"]) + sum_columns(
         df, quarter_cols["q2"]["target"]
     )
+
+    if (
+        len(quarter_cols["q1"]["male"]) + len(quarter_cols["q2"]["male"]) == 0
+        and len(quarter_cols["q1"]["female"]) + len(quarter_cols["q2"]["female"]) == 0
+    ):
+        result["S1 Male"] = sum_columns(df, semester_cols["s1"]["male"])
+        result["S1 Female"] = sum_columns(df, semester_cols["s1"]["female"])
+        result["S1 Target"] = sum_columns(df, semester_cols["s1"]["target"])
+    else:
+        result["S1 Male"] = s1_male_quarter
+        result["S1 Female"] = s1_female_quarter
+        result["S1 Target"] = s1_target_quarter
     result["S1 Total"] = result["S1 Male"] + result["S1 Female"]
 
-    result["S2 Male"] = sum_columns(df, quarter_cols["q3"]["male"]) + sum_columns(
+    s2_male_quarter = sum_columns(df, quarter_cols["q3"]["male"]) + sum_columns(
         df, quarter_cols["q4"]["male"]
     )
-    result["S2 Female"] = sum_columns(df, quarter_cols["q3"]["female"]) + sum_columns(
+    s2_female_quarter = sum_columns(df, quarter_cols["q3"]["female"]) + sum_columns(
         df, quarter_cols["q4"]["female"]
     )
-    result["S2 Target"] = sum_columns(df, quarter_cols["q3"]["target"]) + sum_columns(
+    s2_target_quarter = sum_columns(df, quarter_cols["q3"]["target"]) + sum_columns(
         df, quarter_cols["q4"]["target"]
     )
+
+    if (
+        len(quarter_cols["q3"]["male"]) + len(quarter_cols["q4"]["male"]) == 0
+        and len(quarter_cols["q3"]["female"]) + len(quarter_cols["q4"]["female"]) == 0
+    ):
+        result["S2 Male"] = sum_columns(df, semester_cols["s2"]["male"])
+        result["S2 Female"] = sum_columns(df, semester_cols["s2"]["female"])
+        result["S2 Target"] = sum_columns(df, semester_cols["s2"]["target"])
+    else:
+        result["S2 Male"] = s2_male_quarter
+        result["S2 Female"] = s2_female_quarter
+        result["S2 Target"] = s2_target_quarter
     result["S2 Total"] = result["S2 Male"] + result["S2 Female"]
+
+    annual_male_semester = sum_columns(df, semester_cols["annual"]["male"])
+    annual_female_semester = sum_columns(df, semester_cols["annual"]["female"])
+    annual_target_semester = sum_columns(df, semester_cols["annual"]["target"])
 
     result["Annual Male"] = result["S1 Male"] + result["S2 Male"]
     result["Annual Female"] = result["S1 Female"] + result["S2 Female"]
     result["Annual Target"] = result["S1 Target"] + result["S2 Target"]
+
+    if len(semester_cols["annual"]["male"]) > 0:
+        result["Annual Male"] = annual_male_semester
+    if len(semester_cols["annual"]["female"]) > 0:
+        result["Annual Female"] = annual_female_semester
+    if len(semester_cols["annual"]["target"]) > 0:
+        result["Annual Target"] = annual_target_semester
+
     result["Annual Total"] = result["Annual Male"] + result["Annual Female"]
 
     return result
