@@ -29,6 +29,9 @@ ESSENTIAL_OUTPUT_COLUMNS = [
 ]
 
 
+GROUPING_KEYS = ["Period", "Organization", "Project Name", "indicator"]
+
+
 def normalize_text(value: str) -> str:
     text = str(value).strip().lower()
     text = text.replace("_", " ")
@@ -39,6 +42,12 @@ def normalize_text(value: str) -> str:
 
 def to_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").fillna(0)
+
+
+def normalize_group_key(value) -> str:
+    text = str(value if pd.notna(value) else "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def detect_indicator_sheet(file_obj: io.BytesIO) -> str:
@@ -231,21 +240,26 @@ def prepare_indicator_dataframe(uploaded_file) -> pd.DataFrame:
 
     standardized = standardize_base_columns(raw)
 
-    required_cols = ["Period", "Organization", "Project Name", "indicator"]
-    output = standardized[required_cols].copy()
+    output = standardized[["Period", "indicator"]].copy()
 
     metrics = compute_semester_metrics(raw)
     for col in metrics.columns:
         output[col] = metrics[col]
 
+    # Final combined report should represent PRF aggregated from both source files.
     output["Organization"] = "PRF"
+    output["Project Name"] = "Camp Immunization"
 
-    numeric_cols = [c for c in output.columns if c not in required_cols]
+    output["Period"] = output["Period"].map(normalize_group_key)
+    output["indicator"] = output["indicator"].map(normalize_group_key)
+    output = output[(output["Period"] != "") & (output["indicator"] != "")]
+
+    numeric_cols = [c for c in output.columns if c not in GROUPING_KEYS]
     for c in numeric_cols:
         output[c] = to_numeric_series(output[c])
 
     grouped = (
-        output.groupby(required_cols, dropna=False, as_index=False)[numeric_cols]
+        output.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
         .sum(min_count=1)
         .fillna(0)
     )
@@ -258,11 +272,14 @@ def build_combined_semester_report(file1, file2) -> pd.DataFrame:
     df2 = prepare_indicator_dataframe(file2)
 
     combined = pd.concat([df1, df2], ignore_index=True)
-    keys = ["Period", "Organization", "Project Name", "indicator"]
-    numeric_cols = [c for c in combined.columns if c not in keys]
+    combined["Period"] = combined["Period"].map(normalize_group_key)
+    combined["indicator"] = combined["indicator"].map(normalize_group_key)
+    combined = combined[(combined["Period"] != "") & (combined["indicator"] != "")]
+
+    numeric_cols = [c for c in combined.columns if c not in GROUPING_KEYS]
 
     final_df = (
-        combined.groupby(keys, dropna=False, as_index=False)[numeric_cols]
+        combined.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
         .sum(min_count=1)
         .fillna(0)
     )
