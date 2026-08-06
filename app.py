@@ -40,6 +40,10 @@ def normalize_text(value: str) -> str:
     return text
 
 
+def compact_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", normalize_text(value))
+
+
 def to_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").fillna(0)
 
@@ -133,13 +137,19 @@ def standardize_base_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def detect_gender_tokenized(normalized_col_name: str) -> Optional[str]:
     tokens = normalized_col_name.split(" ")
+    compact = re.sub(r"[^a-z0-9]", "", normalized_col_name)
 
     female_tokens = {"female", "fem", "fema", "fen", "fer", "fe"}
     male_tokens = {"male", "mal", "ma"}
 
     if any(token.startswith("fem") or token in female_tokens for token in tokens):
         return "female"
+    if any(tag in compact for tag in ["female", "fema", "fem", "fen", "fer"]):
+        return "female"
+
     if any(token in male_tokens for token in tokens):
+        return "male"
+    if any(tag in compact for tag in ["male", "mal"]) or compact.endswith("ma"):
         return "male"
 
     return None
@@ -155,23 +165,20 @@ def find_quarter_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
 
     for col in df.columns:
         n = normalize_text(col)
+        c = compact_text(col)
         q = None
-        quarter_patterns = {
-            "q1": r"\bq\s*1\b",
-            "q2": r"\bq\s*2\b",
-            "q3": r"\bq\s*3\b",
-            "q4": r"\bq\s*4\b",
-        }
-        for quarter, pattern in quarter_patterns.items():
-            if re.search(pattern, n):
+        for quarter in ["q1", "q2", "q3", "q4"]:
+            if quarter in c:
                 q = quarter
                 break
 
         if not q:
             continue
 
-        has_u1 = bool(re.search(r"\bu\s*1\b|\bunder\s*1\b|\b<\s*1\b", n))
-        has_15 = bool(re.search(r"\b1\s*(?:to\s*)?5\b", n))
+        has_u1 = bool(re.search(r"\bu\s*1\b|\bunder\s*1\b|\b<\s*1\b", n)) or (
+            "u1" in c or "under1" in c
+        )
+        has_15 = bool(re.search(r"\b1\s*(?:to\s*)?5\b", n)) or ("15" in c)
         has_age_band = has_u1 or has_15
         gender = detect_gender_tokenized(n)
 
@@ -179,7 +186,7 @@ def find_quarter_columns(df: pd.DataFrame) -> Dict[str, Dict[str, List[str]]]:
             quarter_map[q]["male"].append(col)
         elif gender == "female" and has_age_band:
             quarter_map[q]["female"].append(col)
-        elif re.search(r"\btarg\w*\b", n):
+        elif re.search(r"\btarg\w*\b", n) or ("targ" in c):
             quarter_map[q]["target"].append(col)
 
     return quarter_map
