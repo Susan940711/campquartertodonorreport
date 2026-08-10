@@ -76,6 +76,43 @@ def normalize_group_key(value) -> str:
     return text
 
 
+def strip_duplicate_suffix(column_name: str) -> str:
+    return re.sub(r"\.\d+$", "", str(column_name))
+
+
+def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    grouped_columns: Dict[str, List[str]] = {}
+    ordered_bases: List[str] = []
+
+    for column in df.columns:
+        base_name = strip_duplicate_suffix(column)
+        if base_name not in grouped_columns:
+            grouped_columns[base_name] = []
+            ordered_bases.append(base_name)
+        grouped_columns[base_name].append(column)
+
+    collapsed = pd.DataFrame(index=df.index)
+
+    for base_name in ordered_bases:
+        columns = grouped_columns[base_name]
+        if len(columns) == 1:
+            collapsed[base_name] = df[columns[0]]
+            continue
+
+        numeric_parts = [pd.to_numeric(df[col], errors="coerce") for col in columns]
+        numeric_coverage = [part.notna().sum() for part in numeric_parts]
+
+        if sum(numeric_coverage) > 0:
+            collapsed[base_name] = sum(
+                (part.fillna(0) for part in numeric_parts),
+                pd.Series([0] * len(df), index=df.index),
+            )
+        else:
+            collapsed[base_name] = df[columns].bfill(axis=1).iloc[:, 0]
+
+    return collapsed
+
+
 def detect_indicator_sheet(file_obj: io.BytesIO) -> str:
     xls = pd.ExcelFile(file_obj)
     candidates: List[Tuple[str, int]] = []
@@ -170,6 +207,38 @@ def standardize_base_columns(df: pd.DataFrame) -> pd.DataFrame:
         standardized["Organization"] = "PRF"
 
     return standardized
+
+
+def prepare_indicator_raw_dataframe(uploaded_file) -> pd.DataFrame:
+    data = uploaded_file.read()
+    file_io = io.BytesIO(data)
+
+    sheet_name = detect_indicator_sheet(file_io)
+    file_io.seek(0)
+    raw = pd.read_excel(file_io, sheet_name=sheet_name)
+    raw = collapse_duplicate_columns(raw)
+
+    standardized = standardize_base_columns(raw)
+
+    output = standardized.copy()
+    output["Organization"] = "PRF"
+    output["Project Name"] = "Camp Immunization"
+
+    output["Period"] = output["Period"].map(normalize_group_key)
+    output["indicator"] = output["indicator"].map(normalize_group_key)
+    output = output[(output["Period"] != "") & (output["indicator"] != "")]
+
+    numeric_cols = [c for c in output.columns if c not in GROUPING_KEYS]
+    for c in numeric_cols:
+        output[c] = to_numeric_series(output[c])
+
+    grouped = (
+        output.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    return grouped
 
 
 def detect_gender_tokenized(normalized_col_name: str) -> Optional[str]:
@@ -543,6 +612,7 @@ def prepare_indicator_dataframe(uploaded_file) -> pd.DataFrame:
     sheet_name = detect_indicator_sheet(file_io)
     file_io.seek(0)
     raw = pd.read_excel(file_io, sheet_name=sheet_name)
+    raw = collapse_duplicate_columns(raw)
 
     standardized = standardize_base_columns(raw)
 
@@ -571,6 +641,25 @@ def prepare_indicator_dataframe(uploaded_file) -> pd.DataFrame:
     )
 
     return grouped
+
+
+def build_combined_indicator_raw_report(file1, file2) -> pd.DataFrame:
+    df1 = prepare_indicator_raw_dataframe(file1)
+    df2 = prepare_indicator_raw_dataframe(file2)
+
+    combined = pd.concat([df1, df2], ignore_index=True)
+    combined["Period"] = combined["Period"].map(normalize_group_key)
+    combined["indicator"] = combined["indicator"].map(normalize_group_key)
+    combined = combined[(combined["Period"] != "") & (combined["indicator"] != "")]
+
+    numeric_cols = [c for c in combined.columns if c not in GROUPING_KEYS]
+    final_df = (
+        combined.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    return final_df
 
 
 def build_combined_semester_report(file1, file2) -> pd.DataFrame:
@@ -610,6 +699,7 @@ def prepare_age_semester_dataframe(uploaded_file) -> pd.DataFrame:
     sheet_name = detect_indicator_sheet(file_io)
     file_io.seek(0)
     raw = pd.read_excel(file_io, sheet_name=sheet_name)
+    raw = collapse_duplicate_columns(raw)
 
     standardized = standardize_base_columns(raw)
 
@@ -667,11 +757,14 @@ def build_combined_age_semester_report(file1, file2) -> pd.DataFrame:
     return final_df
 
 
-def dataframe_to_excel_bytes(indicator_df: pd.DataFrame, age_df: pd.DataFrame) -> bytes:
+def dataframe_to_excel_bytes(
+    indicator_df: pd.DataFrame, age_df: pd.DataFrame, indicator_raw_df: pd.DataFrame
+) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
+        indicator_raw_df.to_excel(writer, sheet_name="Indicator Sheet Combined", index=False)
     output.seek(0)
     return output.read()
 
@@ -703,13 +796,20 @@ def main() -> None:
                 file1.seek(0)
                 file2.seek(0)
                 age_semester_report = build_combined_age_semester_report(file1, file2)
+                file1.seek(0)
+                file2.seek(0)
+                indicator_raw_report = build_combined_indicator_raw_report(file1, file2)
                 st.success("Semester report generated successfully.")
                 st.subheader("Indicator Semester Achievement")
                 st.dataframe(final_report, use_container_width=True)
                 st.subheader("Age_semester")
                 st.dataframe(age_semester_report, use_container_width=True)
+                st.subheader("Indicator Sheet Combined")
+                st.dataframe(indicator_raw_report, use_container_width=True)
 
-                excel_data = dataframe_to_excel_bytes(final_report, age_semester_report)
+                excel_data = dataframe_to_excel_bytes(
+                    final_report, age_semester_report, indicator_raw_report
+                )
                 st.download_button(
                     "Download Semester Report Excel",
                     data=excel_data,
