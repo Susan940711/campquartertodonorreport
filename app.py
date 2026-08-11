@@ -656,11 +656,34 @@ def combine_reports_in_order(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFra
     return combined.reset_index(drop=True)
 
 
+def aggregate_report_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.reset_index(drop=True)
+
+    group_keys = [col for col in GROUPING_KEYS if col in df.columns]
+    if not group_keys:
+        return df.reset_index(drop=True)
+
+    numeric_cols = [col for col in df.columns if col not in group_keys]
+    for col in numeric_cols:
+        df[col] = to_numeric_series(df[col])
+
+    grouped = (
+        df.groupby(group_keys, dropna=False, as_index=False)[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    ordered_columns = group_keys + [col for col in df.columns if col in numeric_cols]
+    return grouped[ordered_columns]
+
+
 def build_combined_indicator_raw_report(file1, file2) -> pd.DataFrame:
     df1 = prepare_indicator_raw_dataframe(file1)
     df2 = prepare_indicator_raw_dataframe(file2)
 
-    return combine_reports_in_order(df1, df2)
+    combined = combine_reports_in_order(df1, df2)
+    return aggregate_report_rows(combined)
 
 
 def build_combined_semester_report(file1, file2) -> pd.DataFrame:
@@ -668,7 +691,7 @@ def build_combined_semester_report(file1, file2) -> pd.DataFrame:
     df2 = prepare_indicator_dataframe(file2)
 
     combined = combine_reports_in_order(df1, df2)
-    final_df = combined.copy()
+    final_df = aggregate_report_rows(combined)
 
     for col in ESSENTIAL_OUTPUT_COLUMNS:
         if col not in final_df.columns:
@@ -724,7 +747,7 @@ def build_combined_age_semester_report(file1, file2) -> pd.DataFrame:
     df2 = prepare_age_semester_dataframe(file2)
 
     combined = combine_reports_in_order(df1, df2)
-    final_df = combined.copy()
+    final_df = aggregate_report_rows(combined)
 
     for col in AGE_SEMESTER_OUTPUT_COLUMNS:
         if col not in final_df.columns:
