@@ -643,41 +643,32 @@ def prepare_indicator_dataframe(uploaded_file) -> pd.DataFrame:
     return grouped
 
 
-def build_combined_indicator_raw_report(file1, file2) -> pd.DataFrame:
-    df1 = prepare_indicator_raw_dataframe(file1)
-    df2 = prepare_indicator_raw_dataframe(file2)
-
+def combine_reports_in_order(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
     combined = pd.concat([df1, df2], ignore_index=True)
     combined["Period"] = combined["Period"].map(normalize_group_key)
     combined["indicator"] = combined["indicator"].map(normalize_group_key)
     combined = combined[(combined["Period"] != "") & (combined["indicator"] != "")]
 
     numeric_cols = [c for c in combined.columns if c not in GROUPING_KEYS]
-    final_df = (
-        combined.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
-        .sum(min_count=1)
-        .fillna(0)
-    )
+    for col in numeric_cols:
+        combined[col] = to_numeric_series(combined[col])
 
-    return final_df
+    return combined.reset_index(drop=True)
+
+
+def build_combined_indicator_raw_report(file1, file2) -> pd.DataFrame:
+    df1 = prepare_indicator_raw_dataframe(file1)
+    df2 = prepare_indicator_raw_dataframe(file2)
+
+    return combine_reports_in_order(df1, df2)
 
 
 def build_combined_semester_report(file1, file2) -> pd.DataFrame:
     df1 = prepare_indicator_dataframe(file1)
     df2 = prepare_indicator_dataframe(file2)
 
-    combined = pd.concat([df1, df2], ignore_index=True)
-    combined["Period"] = combined["Period"].map(normalize_group_key)
-    combined["indicator"] = combined["indicator"].map(normalize_group_key)
-    combined = combined[(combined["Period"] != "") & (combined["indicator"] != "")]
-
-    numeric_cols = [c for c in combined.columns if c not in GROUPING_KEYS]
-
-    final_df = (
-        combined.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
-        .sum(min_count=1)
-        .fillna(0)
-    )
+    combined = combine_reports_in_order(df1, df2)
+    final_df = combined.copy()
 
     for col in ESSENTIAL_OUTPUT_COLUMNS:
         if col not in final_df.columns:
@@ -732,17 +723,8 @@ def build_combined_age_semester_report(file1, file2) -> pd.DataFrame:
     df1 = prepare_age_semester_dataframe(file1)
     df2 = prepare_age_semester_dataframe(file2)
 
-    combined = pd.concat([df1, df2], ignore_index=True)
-    combined["Period"] = combined["Period"].map(normalize_group_key)
-    combined["indicator"] = combined["indicator"].map(normalize_group_key)
-    combined = combined[(combined["Period"] != "") & (combined["indicator"] != "")]
-
-    numeric_cols = [c for c in combined.columns if c not in GROUPING_KEYS]
-    final_df = (
-        combined.groupby(GROUPING_KEYS, dropna=False, as_index=False)[numeric_cols]
-        .sum(min_count=1)
-        .fillna(0)
-    )
+    combined = combine_reports_in_order(df1, df2)
+    final_df = combined.copy()
 
     for col in AGE_SEMESTER_OUTPUT_COLUMNS:
         if col not in final_df.columns:
@@ -757,14 +739,30 @@ def build_combined_age_semester_report(file1, file2) -> pd.DataFrame:
     return final_df
 
 
+def build_summary_combine_sheet(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return pd.DataFrame(columns=ESSENTIAL_OUTPUT_COLUMNS)
+
+    summary_copy = summary_df.copy()
+    for col in ESSENTIAL_OUTPUT_COLUMNS:
+        if col not in summary_copy.columns:
+            summary_copy[col] = 0
+
+    return summary_copy[ESSENTIAL_OUTPUT_COLUMNS]
+
+
 def dataframe_to_excel_bytes(
-    indicator_df: pd.DataFrame, age_df: pd.DataFrame, indicator_raw_df: pd.DataFrame
+    indicator_df: pd.DataFrame,
+    age_df: pd.DataFrame,
+    indicator_raw_df: pd.DataFrame,
+    summary_combine_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
         indicator_raw_df.to_excel(writer, sheet_name="Indicator Sheet Combined", index=False)
+        summary_combine_df.to_excel(writer, sheet_name="Summary combine", index=False)
     output.seek(0)
     return output.read()
 
@@ -807,8 +805,12 @@ def main() -> None:
                 st.subheader("Indicator Sheet Combined")
                 st.dataframe(indicator_raw_report, use_container_width=True)
 
+                summary_combine_df = build_summary_combine_sheet(final_report)
                 excel_data = dataframe_to_excel_bytes(
-                    final_report, age_semester_report, indicator_raw_report
+                    final_report,
+                    age_semester_report,
+                    indicator_raw_report,
+                    summary_combine_df,
                 )
                 st.download_button(
                     "Download Semester Report Excel",
