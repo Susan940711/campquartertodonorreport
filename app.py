@@ -160,6 +160,47 @@ def detect_indicator_sheet(file_obj: io.BytesIO) -> str:
     return candidates[0][0]
 
 
+def detect_summary_sheet(file_obj: io.BytesIO) -> str:
+    xls = pd.ExcelFile(file_obj)
+    candidates: List[Tuple[str, int]] = []
+
+    for sheet in xls.sheet_names:
+        try:
+            sample = pd.read_excel(xls, sheet_name=sheet, nrows=3)
+        except Exception:
+            continue
+
+        normalized = [normalize_text(c) for c in sample.columns]
+        compact_cols = [compact_text(c) for c in sample.columns]
+        sheet_name = normalize_text(sheet)
+        score = 0
+
+        if sheet_name == "summary":
+            score += 8
+        elif "summary" in sheet_name:
+            score += 5
+
+        if any("period" in c for c in normalized):
+            score += 2
+        if any("indicator" in c for c in normalized):
+            score += 2
+        if any(c.startswith("s1") or c.startswith("s2") for c in compact_cols):
+            score += 2
+        if any(c.startswith("annual") for c in compact_cols):
+            score += 2
+        if any(q in c for c in compact_cols for q in ["q1", "q2", "q3", "q4"]):
+            score -= 1
+
+        if score > 0:
+            candidates.append((sheet, score))
+
+    if not candidates:
+        raise ValueError("Could not detect a summary sheet. Please verify the source files.")
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[0][0]
+
+
 def get_column_map(columns: List[str]) -> Dict[str, str]:
     mapping = {}
     normalized_map = {normalize_text(c): c for c in columns}
@@ -794,16 +835,114 @@ def build_summary_combine_sheet(summary_df: pd.DataFrame) -> pd.DataFrame:
     return grouped[ESSENTIAL_OUTPUT_COLUMNS]
 
 
+def normalize_summary_columns(df: pd.DataFrame) -> pd.DataFrame:
+    rename_map: Dict[str, str] = {}
+    for col in df.columns:
+        n = normalize_text(col)
+        if n == "period":
+            rename_map[col] = "Period"
+        elif n == "year":
+            rename_map[col] = "Year"
+        elif "organization" in n or n.startswith("organiz"):
+            rename_map[col] = "Organization"
+        elif "project name" in n or n.startswith("project na") or n == "project":
+            rename_map[col] = "Project Name"
+    return df.rename(columns=rename_map)
+
+
+def aggregate_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.reset_index(drop=True)
+
+    preferred_keys = [
+        "Year",
+        "Period",
+        "Organization",
+        "Project Name",
+        "District (EHO)",
+        "Township_EHO",
+        "Twp_MIMU",
+        "Clinic Name",
+    ]
+    group_keys = [col for col in preferred_keys if col in df.columns]
+    if not group_keys:
+        group_keys = [
+            col for col in df.columns if not pd.api.types.is_numeric_dtype(df[col])
+        ]
+
+    numeric_cols = [col for col in df.columns if col not in group_keys]
+    for col in numeric_cols:
+        df[col] = to_numeric_series(df[col])
+
+    grouped = (
+        df.groupby(group_keys, dropna=False, as_index=False)[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    ordered_columns = group_keys + [col for col in df.columns if col in numeric_cols]
+    return grouped[ordered_columns]
+
+
+def prepare_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
+    data = uploaded_file.read()
+    file_io = io.BytesIO(data)
+
+    sheet_name = detect_summary_sheet(file_io)
+    file_io.seek(0)
+    raw = pd.read_excel(file_io, sheet_name=sheet_name)
+    raw = collapse_duplicate_columns(raw)
+    raw = normalize_summary_columns(raw)
+
+    output = raw.copy()
+
+    if "Period" in output.columns:
+        output["Period"] = output["Period"].map(normalize_group_key)
+        output = output[output["Period"] != ""]
+
+    return aggregate_summary_rows(output)
+
+
+def build_combined_summary_report(file1, file2) -> pd.DataFrame:
+    df1 = prepare_summary_source_dataframe(file1)
+    df2 = prepare_summary_source_dataframe(file2)
+
+    combined = pd.concat([df1, df2], ignore_index=True, sort=False)
+    summary_df = aggregate_summary_rows(combined)
+
+    numeric_cols = [
+        col
+        for col in summary_df.columns
+        if col
+        not in [
+            "Year",
+            "Period",
+            "Organization",
+            "Project Name",
+            "District (EHO)",
+            "Township_EHO",
+            "Twp_MIMU",
+            "Clinic Name",
+        ]
+    ]
+    for col in numeric_cols:
+        summary_df[col] = to_numeric_series(summary_df[col]).round(0).astype(int)
+
+    return summary_df
+
+
 def dataframe_to_excel_bytes(
     indicator_df: pd.DataFrame,
     age_df: pd.DataFrame,
     indicator_raw_df: pd.DataFrame,
+    summary_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
         indicator_raw_df.to_excel(writer, sheet_name="Indicator Sheet Combined", index=False)
+        summary_df.to_excel(writer, sheet_name="Summary_combine", index=False)
     output.seek(0)
     return output.read()
 
@@ -838,6 +977,9 @@ def main() -> None:
                 file1.seek(0)
                 file2.seek(0)
                 indicator_raw_report = build_combined_indicator_raw_report(file1, file2)
+                file1.seek(0)
+                file2.seek(0)
+                summary_combine_df = build_combined_summary_report(file1, file2)
                 st.success("Semester report generated successfully.")
                 st.subheader("Indicator Semester Achievement")
                 st.dataframe(final_report, use_container_width=True)
@@ -845,12 +987,14 @@ def main() -> None:
                 st.dataframe(age_semester_report, use_container_width=True)
                 st.subheader("Indicator Sheet Combined")
                 st.dataframe(indicator_raw_report, use_container_width=True)
+                st.subheader("Summary_combine")
+                st.dataframe(summary_combine_df, use_container_width=True)
 
-                summary_combine_df = build_summary_combine_sheet(final_report)
                 excel_data = dataframe_to_excel_bytes(
                     final_report,
                     age_semester_report,
                     indicator_raw_report,
+                    summary_combine_df,
                 )
                 st.download_button(
                     "Download Semester Report Excel",
