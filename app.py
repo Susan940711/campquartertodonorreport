@@ -748,7 +748,27 @@ def build_summary_combine_sheet(summary_df: pd.DataFrame) -> pd.DataFrame:
         if col not in summary_copy.columns:
             summary_copy[col] = 0
 
-    return summary_copy[ESSENTIAL_OUTPUT_COLUMNS]
+    numeric_cols = [
+        col for col in ESSENTIAL_OUTPUT_COLUMNS if col not in ["Period", "Organization", "Project Name", "indicator"]
+    ]
+    for col in numeric_cols:
+        summary_copy[col] = to_numeric_series(summary_copy[col])
+
+    grouped = (
+        summary_copy.groupby(
+            ["Period", "Organization", "Project Name", "indicator"],
+            dropna=False,
+            as_index=False,
+        )[numeric_cols]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+
+    for col in ESSENTIAL_OUTPUT_COLUMNS:
+        if col not in grouped.columns:
+            grouped[col] = 0
+
+    return grouped[ESSENTIAL_OUTPUT_COLUMNS]
 
 
 def dataframe_to_excel_bytes(
