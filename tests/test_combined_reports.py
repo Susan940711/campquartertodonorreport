@@ -46,11 +46,20 @@ def test_build_summary_combine_sheet_contains_combined_rows() -> None:
                 "indicator": "Vaccination",
                 "S1 Male": 1,
                 "S1 Female": 2,
-            }
+            },
+            {
+                "Period": "Q1",
+                "Organization": "PRF",
+                "Project Name": "Camp Immunization",
+                "indicator": "Vaccination",
+                "S1 Male": 3,
+                "S1 Female": 4,
+            },
         ]
     )
 
     combined_sheet = build_summary_combine_sheet(summary_df)
 
-    assert not combined_sheet.empty
-    assert combined_sheet.iloc[0]["indicator"] == "Vaccination"
+    assert len(combined_sheet) == 1
+    assert combined_sheet.iloc[0]["S1 Male"] == 4
+    assert combined_sheet.iloc[0]["S1 Female"] == 6
