@@ -777,7 +777,7 @@ def dataframe_to_excel_bytes(
     indicator_raw_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpxl") as writer:
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
         indicator_raw_df.to_excel(writer, sheet_name="Indicator Sheet Combined", index=False)
