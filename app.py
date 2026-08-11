@@ -755,14 +755,12 @@ def dataframe_to_excel_bytes(
     indicator_df: pd.DataFrame,
     age_df: pd.DataFrame,
     indicator_raw_df: pd.DataFrame,
-    summary_combine_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    with pd.ExcelWriter(output, engine="openpxl") as writer:
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
         indicator_raw_df.to_excel(writer, sheet_name="Indicator Sheet Combined", index=False)
-        summary_combine_df.to_excel(writer, sheet_name="Summary combine", index=False)
     output.seek(0)
     return output.read()
 
@@ -810,7 +808,6 @@ def main() -> None:
                     final_report,
                     age_semester_report,
                     indicator_raw_report,
-                    summary_combine_df,
                 )
                 st.download_button(
                     "Download Semester Report Excel",
