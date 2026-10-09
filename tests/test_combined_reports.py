@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from app import (
+    build_combined_alod_cummu_rows,
     build_combined_summary_rows,
     build_combined_yearly_cumulative_rows,
     build_summary_combine_sheet,
@@ -81,7 +82,7 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
     workbook = load_workbook(
         BytesIO(
             dataframe_to_excel_bytes(
-                empty_df, empty_df, empty_df, empty_df, empty_df, empty_df
+                empty_df, empty_df, empty_df, empty_df, empty_df, empty_df, empty_df
             )
         ),
         read_only=True,
@@ -93,6 +94,7 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
         "indicators",
         "Summary",
         "yearly_cumulative",
+        "ALOD_cummu",
         "Summary_combine",
     ]
 
@@ -171,6 +173,41 @@ def test_build_combined_yearly_cumulative_rows_uses_cumulative_source_sheets() -
     assert result["Township_EHO"].tolist() == ["", "Township A"]
     assert result["ALOD_U1"].tolist() == [1, 3]
     assert "Wrong source sheet" not in result.columns
+
+
+def test_build_combined_alod_cummu_rows_sums_matching_period_and_indicator() -> None:
+    source1 = BytesIO()
+    source2 = BytesIO()
+    with pd.ExcelWriter(source1, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Period": [2025, 2026],
+                "Organization": ["PRF", "PRF"],
+                "Project Name": ["REACH-KK", "REACH-KK"],
+                "indicator": ["ALOD", "ALOD"],
+                "Annual Total": [4, 10],
+                "S1 Total": [2, 5],
+            }
+        ).to_excel(writer, sheet_name="ALOD_cummu", index=False)
+    with pd.ExcelWriter(source2, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Period": [2026],
+                "Organization": ["PRF"],
+                "Project Name": ["REACH-KK"],
+                "indicator": ["ALOD"],
+                "Annual Total": [7],
+                "S1 Total": [3],
+            }
+        ).to_excel(writer, sheet_name="alod_cummu_indicator", index=False)
+    source1.seek(0)
+    source2.seek(0)
+
+    result = build_combined_alod_cummu_rows(source1, source2)
+
+    assert result["Period"].tolist() == [2025, 2026]
+    assert result["Annual Total"].tolist() == [4, 17]
+    assert result["S1 Total"].tolist() == [2, 8]
 
 
 def test_prepare_indicator_raw_dataframe_uses_reach_kk_project_name() -> None:
