@@ -263,7 +263,7 @@ def prepare_indicator_raw_dataframe(uploaded_file) -> pd.DataFrame:
 
     output = standardized.copy()
     output["Organization"] = "PRF"
-    output["Project Name"] = "Camp Immunization"
+    output["Project Name"] = "REACH-KK"
 
     output["Period"] = output["Period"].map(normalize_group_key)
     output["indicator"] = output["indicator"].map(normalize_group_key)
