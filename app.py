@@ -955,12 +955,12 @@ def main() -> None:
     )
 
     file1 = st.file_uploader(
-        "Upload source file 1 (MaeLa_Camp_EPI_Quarterly_Report...)",
+        "Upload source file 1 (Mae La report)",
         type=["xlsx"],
         key="source1",
     )
     file2 = st.file_uploader(
-        "Upload source file 2 (PRF_Quarterly_report...)",
+        "Upload source file 2 (Umpium report)",
         type=["xlsx"],
         key="source2",
     )
