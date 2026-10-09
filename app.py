@@ -884,7 +884,7 @@ def aggregate_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
     return grouped[ordered_columns]
 
 
-def prepare_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
+def read_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
     data = uploaded_file.read()
     file_io = io.BytesIO(data)
 
@@ -892,15 +892,23 @@ def prepare_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
     file_io.seek(0)
     raw = pd.read_excel(file_io, sheet_name=sheet_name)
     raw = collapse_duplicate_columns(raw)
-    raw = normalize_summary_columns(raw)
+    return normalize_summary_columns(raw)
 
-    output = raw.copy()
+
+def prepare_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
+    output = read_summary_source_dataframe(uploaded_file)
 
     if "Period" in output.columns:
         output["Period"] = output["Period"].map(normalize_group_key)
         output = output[output["Period"] != ""]
 
     return aggregate_summary_rows(output)
+
+
+def build_combined_summary_rows(file1, file2) -> pd.DataFrame:
+    df1 = read_summary_source_dataframe(file1)
+    df2 = read_summary_source_dataframe(file2)
+    return pd.concat([df1, df2], ignore_index=True, sort=False)
 
 
 def build_combined_summary_report(file1, file2) -> pd.DataFrame:
@@ -935,6 +943,7 @@ def dataframe_to_excel_bytes(
     indicator_df: pd.DataFrame,
     age_df: pd.DataFrame,
     indicator_raw_df: pd.DataFrame,
+    summary_rows_df: pd.DataFrame,
     summary_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
@@ -942,6 +951,7 @@ def dataframe_to_excel_bytes(
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
         indicator_raw_df.to_excel(writer, sheet_name="indicators", index=False)
+        summary_rows_df.to_excel(writer, sheet_name="Summary", index=False)
         summary_df.to_excel(writer, sheet_name="Summary_combine", index=False)
     output.seek(0)
     return output.read()
@@ -979,6 +989,9 @@ def main() -> None:
                 indicator_raw_report = build_combined_indicator_raw_report(file1, file2)
                 file1.seek(0)
                 file2.seek(0)
+                summary_rows_df = build_combined_summary_rows(file1, file2)
+                file1.seek(0)
+                file2.seek(0)
                 summary_combine_df = build_combined_summary_report(file1, file2)
                 st.success("Semester report generated successfully.")
                 st.subheader("Indicator Semester Achievement")
@@ -987,6 +1000,8 @@ def main() -> None:
                 st.dataframe(age_semester_report, use_container_width=True)
                 st.subheader("indicators")
                 st.dataframe(indicator_raw_report, use_container_width=True)
+                st.subheader("Summary")
+                st.dataframe(summary_rows_df, use_container_width=True)
                 st.subheader("Summary_combine")
                 st.dataframe(summary_combine_df, use_container_width=True)
 
@@ -994,6 +1009,7 @@ def main() -> None:
                     final_report,
                     age_semester_report,
                     indicator_raw_report,
+                    summary_rows_df,
                     summary_combine_df,
                 )
                 st.download_button(
