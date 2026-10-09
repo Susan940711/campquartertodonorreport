@@ -930,6 +930,37 @@ def build_combined_yearly_cumulative_rows(file1, file2) -> pd.DataFrame:
     return combined.reindex(columns=columns)
 
 
+def build_combined_alod_cummu_rows(file1, file2) -> pd.DataFrame:
+    maela_df = read_summary_source_dataframe(file1, sheet_name="ALOD_cummu")
+    prf_df = read_summary_source_dataframe(
+        file2, sheet_name="alod_cummu_indicator"
+    )
+    combined = pd.concat([maela_df, prf_df], ignore_index=True, sort=False)
+
+    group_columns = ["Period", "Organization", "Project Name", "indicator"]
+    missing_columns = [column for column in group_columns if column not in combined]
+    if missing_columns:
+        raise ValueError(
+            "ALOD cumulative sheets are missing required columns: "
+            + ", ".join(missing_columns)
+        )
+
+    numeric_columns = [
+        column for column in combined.columns if column not in group_columns
+    ]
+    for column in numeric_columns:
+        combined[column] = to_numeric_series(combined[column])
+
+    grouped = (
+        combined.groupby(group_columns, dropna=False, as_index=False, sort=False)[
+            numeric_columns
+        ]
+        .sum(min_count=1)
+        .fillna(0)
+    )
+    return grouped[group_columns + numeric_columns]
+
+
 def build_combined_summary_report(file1, file2) -> pd.DataFrame:
     df1 = prepare_summary_source_dataframe(file1)
     df2 = prepare_summary_source_dataframe(file2)
@@ -964,6 +995,7 @@ def dataframe_to_excel_bytes(
     indicator_raw_df: pd.DataFrame,
     summary_rows_df: pd.DataFrame,
     yearly_cumulative_df: pd.DataFrame,
+    alod_cummu_df: pd.DataFrame,
     summary_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
@@ -975,6 +1007,7 @@ def dataframe_to_excel_bytes(
         yearly_cumulative_df.to_excel(
             writer, sheet_name="yearly_cumulative", index=False
         )
+        alod_cummu_df.to_excel(writer, sheet_name="ALOD_cummu", index=False)
         summary_df.to_excel(writer, sheet_name="Summary_combine", index=False)
     output.seek(0)
     return output.read()
@@ -1020,6 +1053,9 @@ def main() -> None:
                 )
                 file1.seek(0)
                 file2.seek(0)
+                alod_cummu_df = build_combined_alod_cummu_rows(file1, file2)
+                file1.seek(0)
+                file2.seek(0)
                 summary_combine_df = build_combined_summary_report(file1, file2)
                 st.success("Semester report generated successfully.")
                 st.subheader("Indicator Semester Achievement")
@@ -1032,6 +1068,8 @@ def main() -> None:
                 st.dataframe(summary_rows_df, use_container_width=True)
                 st.subheader("yearly_cumulative")
                 st.dataframe(yearly_cumulative_df, use_container_width=True)
+                st.subheader("ALOD_cummu")
+                st.dataframe(alod_cummu_df, use_container_width=True)
                 st.subheader("Summary_combine")
                 st.dataframe(summary_combine_df, use_container_width=True)
 
@@ -1041,6 +1079,7 @@ def main() -> None:
                     indicator_raw_report,
                     summary_rows_df,
                     yearly_cumulative_df,
+                    alod_cummu_df,
                     summary_combine_df,
                 )
                 st.download_button(
