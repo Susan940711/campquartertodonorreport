@@ -884,13 +884,15 @@ def aggregate_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
     return grouped[ordered_columns]
 
 
-def read_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
+def read_summary_source_dataframe(
+    uploaded_file, sheet_name: Optional[str] = None
+) -> pd.DataFrame:
     data = uploaded_file.read()
     file_io = io.BytesIO(data)
 
-    sheet_name = detect_summary_sheet(file_io)
+    source_sheet_name = sheet_name or detect_summary_sheet(file_io)
     file_io.seek(0)
-    raw = pd.read_excel(file_io, sheet_name=sheet_name)
+    raw = pd.read_excel(file_io, sheet_name=source_sheet_name)
     raw = collapse_duplicate_columns(raw)
     return normalize_summary_columns(raw)
 
@@ -906,9 +908,20 @@ def prepare_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
 
 
 def build_combined_summary_rows(file1, file2) -> pd.DataFrame:
-    df1 = read_summary_source_dataframe(file1)
-    df2 = read_summary_source_dataframe(file2)
-    return pd.concat([df1, df2], ignore_index=True, sort=False)
+    maela_df = read_summary_source_dataframe(file1, sheet_name="cummu_summary")
+    prf_df = read_summary_source_dataframe(
+        file2, sheet_name="yearly_cummu_summary"
+    )
+
+    for column in ["District (EHO)", "Township_EHO"]:
+        if column not in maela_df.columns:
+            maela_df[column] = ""
+
+    combined = pd.concat([maela_df, prf_df], ignore_index=True, sort=False)
+    columns = list(prf_df.columns) + [
+        column for column in maela_df.columns if column not in prf_df.columns
+    ]
+    return combined.reindex(columns=columns)
 
 
 def build_combined_summary_report(file1, file2) -> pd.DataFrame:
