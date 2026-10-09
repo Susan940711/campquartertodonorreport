@@ -908,6 +908,12 @@ def prepare_summary_source_dataframe(uploaded_file) -> pd.DataFrame:
 
 
 def build_combined_summary_rows(file1, file2) -> pd.DataFrame:
+    df1 = read_summary_source_dataframe(file1)
+    df2 = read_summary_source_dataframe(file2)
+    return pd.concat([df1, df2], ignore_index=True, sort=False)
+
+
+def build_combined_yearly_cumulative_rows(file1, file2) -> pd.DataFrame:
     maela_df = read_summary_source_dataframe(file1, sheet_name="cummu_summary")
     prf_df = read_summary_source_dataframe(
         file2, sheet_name="yearly_cummu_summary"
@@ -957,6 +963,7 @@ def dataframe_to_excel_bytes(
     age_df: pd.DataFrame,
     indicator_raw_df: pd.DataFrame,
     summary_rows_df: pd.DataFrame,
+    yearly_cumulative_df: pd.DataFrame,
     summary_df: pd.DataFrame,
 ) -> bytes:
     output = io.BytesIO()
@@ -965,6 +972,9 @@ def dataframe_to_excel_bytes(
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
         indicator_raw_df.to_excel(writer, sheet_name="indicators", index=False)
         summary_rows_df.to_excel(writer, sheet_name="Summary", index=False)
+        yearly_cumulative_df.to_excel(
+            writer, sheet_name="yearly_cumulative", index=False
+        )
         summary_df.to_excel(writer, sheet_name="Summary_combine", index=False)
     output.seek(0)
     return output.read()
@@ -1005,6 +1015,11 @@ def main() -> None:
                 summary_rows_df = build_combined_summary_rows(file1, file2)
                 file1.seek(0)
                 file2.seek(0)
+                yearly_cumulative_df = build_combined_yearly_cumulative_rows(
+                    file1, file2
+                )
+                file1.seek(0)
+                file2.seek(0)
                 summary_combine_df = build_combined_summary_report(file1, file2)
                 st.success("Semester report generated successfully.")
                 st.subheader("Indicator Semester Achievement")
@@ -1015,6 +1030,8 @@ def main() -> None:
                 st.dataframe(indicator_raw_report, use_container_width=True)
                 st.subheader("Summary")
                 st.dataframe(summary_rows_df, use_container_width=True)
+                st.subheader("yearly_cumulative")
+                st.dataframe(yearly_cumulative_df, use_container_width=True)
                 st.subheader("Summary_combine")
                 st.dataframe(summary_combine_df, use_container_width=True)
 
@@ -1023,6 +1040,7 @@ def main() -> None:
                     age_semester_report,
                     indicator_raw_report,
                     summary_rows_df,
+                    yearly_cumulative_df,
                     summary_combine_df,
                 )
                 st.download_button(
