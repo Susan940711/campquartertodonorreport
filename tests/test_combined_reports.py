@@ -1,6 +1,13 @@
-import pandas as pd
+from io import BytesIO
 
-from app import build_summary_combine_sheet, combine_reports_in_order
+import pandas as pd
+from openpyxl import load_workbook
+
+from app import (
+    build_summary_combine_sheet,
+    combine_reports_in_order,
+    dataframe_to_excel_bytes,
+)
 
 
 def test_combine_reports_in_order_keeps_rows_in_input_order() -> None:
@@ -63,3 +70,19 @@ def test_build_summary_combine_sheet_contains_combined_rows() -> None:
     assert len(combined_sheet) == 1
     assert combined_sheet.iloc[0]["S1 Male"] == 4
     assert combined_sheet.iloc[0]["S1 Female"] == 6
+
+
+def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() -> None:
+    empty_df = pd.DataFrame()
+
+    workbook = load_workbook(
+        BytesIO(dataframe_to_excel_bytes(empty_df, empty_df, empty_df, empty_df)),
+        read_only=True,
+    )
+
+    assert workbook.sheetnames == [
+        "Indicator Semester Achievement",
+        "Age_semester",
+        "indicators",
+        "Summary_combine",
+    ]
