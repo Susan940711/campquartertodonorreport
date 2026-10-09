@@ -941,7 +941,7 @@ def dataframe_to_excel_bytes(
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         indicator_df.to_excel(writer, sheet_name="Indicator Semester Achievement", index=False)
         age_df.to_excel(writer, sheet_name="Age_semester", index=False)
-        indicator_raw_df.to_excel(writer, sheet_name="Indicator Sheet Combined", index=False)
+        indicator_raw_df.to_excel(writer, sheet_name="indicators", index=False)
         summary_df.to_excel(writer, sheet_name="Summary_combine", index=False)
     output.seek(0)
     return output.read()
@@ -985,7 +985,7 @@ def main() -> None:
                 st.dataframe(final_report, use_container_width=True)
                 st.subheader("Age_semester")
                 st.dataframe(age_semester_report, use_container_width=True)
-                st.subheader("Indicator Sheet Combined")
+                st.subheader("indicators")
                 st.dataframe(indicator_raw_report, use_container_width=True)
                 st.subheader("Summary_combine")
                 st.dataframe(summary_combine_df, use_container_width=True)
