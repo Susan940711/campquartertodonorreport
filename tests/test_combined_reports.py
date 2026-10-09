@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from app import (
+    build_combined_summary_rows,
     build_summary_combine_sheet,
     combine_reports_in_order,
     dataframe_to_excel_bytes,
@@ -77,7 +78,11 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
     empty_df = pd.DataFrame()
 
     workbook = load_workbook(
-        BytesIO(dataframe_to_excel_bytes(empty_df, empty_df, empty_df, empty_df)),
+        BytesIO(
+            dataframe_to_excel_bytes(
+                empty_df, empty_df, empty_df, empty_df, empty_df
+            )
+        ),
         read_only=True,
     )
 
@@ -85,8 +90,33 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
         "Indicator Semester Achievement",
         "Age_semester",
         "indicators",
+        "Summary",
         "Summary_combine",
     ]
+
+
+def test_build_combined_summary_rows_appends_rows_from_both_summary_sheets() -> None:
+    source1 = BytesIO()
+    source2 = BytesIO()
+    with pd.ExcelWriter(source1, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Period": ["Q1", "Q2"],
+                "Project Name": ["Mae La", "Mae La"],
+                "Value": [1, 2],
+            }
+        ).to_excel(writer, sheet_name="Summary", index=False)
+    with pd.ExcelWriter(source2, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {"Period": ["Q1"], "Project Name": ["Umpium"], "Value": [3]}
+        ).to_excel(writer, sheet_name="Summary", index=False)
+    source1.seek(0)
+    source2.seek(0)
+
+    result = build_combined_summary_rows(source1, source2)
+
+    assert result["Project Name"].tolist() == ["Mae La", "Mae La", "Umpium"]
+    assert result["Value"].tolist() == [1, 2, 3]
 
 
 def test_prepare_indicator_raw_dataframe_uses_reach_kk_project_name() -> None:
