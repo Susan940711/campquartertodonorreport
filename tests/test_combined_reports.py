@@ -5,6 +5,7 @@ from openpyxl import load_workbook
 
 from app import (
     build_combined_summary_rows,
+    build_combined_yearly_cumulative_rows,
     build_summary_combine_sheet,
     combine_reports_in_order,
     dataframe_to_excel_bytes,
@@ -80,7 +81,7 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
     workbook = load_workbook(
         BytesIO(
             dataframe_to_excel_bytes(
-                empty_df, empty_df, empty_df, empty_df, empty_df
+                empty_df, empty_df, empty_df, empty_df, empty_df, empty_df
             )
         ),
         read_only=True,
@@ -91,11 +92,43 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
         "Age_semester",
         "indicators",
         "Summary",
+        "yearly_cumulative",
         "Summary_combine",
     ]
 
 
 def test_build_combined_summary_rows_appends_rows_from_both_summary_sheets() -> None:
+    source1 = BytesIO()
+    source2 = BytesIO()
+    with pd.ExcelWriter(source1, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Period": ["Q1"],
+                "Project Name": ["Mae La"],
+                "Value": [1],
+            }
+        ).to_excel(writer, sheet_name="Summary", index=False)
+        pd.DataFrame({"Wrong source sheet": [True]}).to_excel(
+            writer, sheet_name="cummu_summary", index=False
+        )
+    with pd.ExcelWriter(source2, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {"Period": ["Q1"], "Project Name": ["Umpium"], "Value": [3]}
+        ).to_excel(writer, sheet_name="Summary", index=False)
+        pd.DataFrame({"Wrong source sheet": [True]}).to_excel(
+            writer, sheet_name="yearly_cummu_summary", index=False
+        )
+    source1.seek(0)
+    source2.seek(0)
+
+    result = build_combined_summary_rows(source1, source2)
+
+    assert result["Project Name"].tolist() == ["Mae La", "Umpium"]
+    assert result["Value"].tolist() == [1, 3]
+    assert "Wrong source sheet" not in result.columns
+
+
+def test_build_combined_yearly_cumulative_rows_uses_cumulative_source_sheets() -> None:
     source1 = BytesIO()
     source2 = BytesIO()
     with pd.ExcelWriter(source1, engine="openpyxl") as writer:
@@ -131,7 +164,7 @@ def test_build_combined_summary_rows_appends_rows_from_both_summary_sheets() -> 
     source1.seek(0)
     source2.seek(0)
 
-    result = build_combined_summary_rows(source1, source2)
+    result = build_combined_yearly_cumulative_rows(source1, source2)
 
     assert result["Organization"].tolist() == ["Mae La", "PRF"]
     assert result["District (EHO)"].tolist() == ["", "District A"]
