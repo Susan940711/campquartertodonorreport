@@ -7,6 +7,7 @@ from app import (
     build_summary_combine_sheet,
     combine_reports_in_order,
     dataframe_to_excel_bytes,
+    prepare_indicator_raw_dataframe,
 )
 
 
@@ -86,3 +87,20 @@ def test_dataframe_to_excel_bytes_names_combined_indicator_sheet_indicators() ->
         "indicators",
         "Summary_combine",
     ]
+
+
+def test_prepare_indicator_raw_dataframe_uses_reach_kk_project_name() -> None:
+    source = BytesIO()
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Period": ["Q1"],
+                "indicator": ["Vaccination"],
+                "Value": [1],
+            }
+        ).to_excel(writer, sheet_name="indicator", index=False)
+    source.seek(0)
+
+    result = prepare_indicator_raw_dataframe(source)
+
+    assert result["Project Name"].tolist() == ["REACH-KK"]
